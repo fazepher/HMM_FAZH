@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="" xml:lang="">
+  <head>
+    <title>Hidden Markov Models</title>
+    <meta charset="utf-8" />
+    <meta name="author" content="Fernando A. Zepeda H." />
+    <meta name="date" content="2021-05-20" />
+    <script src="HMM_FAZH_files/header-attrs/header-attrs.js"></script>
+    <script src="HMM_FAZH_files/htmlwidgets/htmlwidgets.js"></script>
+    <script src="HMM_FAZH_files/jquery/jquery.min.js"></script>
+    <link href="HMM_FAZH_files/datatables-css/datatables-crosstalk.css" rel="stylesheet" />
+    <script src="HMM_FAZH_files/datatables-binding/datatables.js"></script>
+    <link href="HMM_FAZH_files/dt-core/css/jquery.dataTables.min.css" rel="stylesheet" />
+    <link href="HMM_FAZH_files/dt-core/css/jquery.dataTables.extra.css" rel="stylesheet" />
+    <script src="HMM_FAZH_files/dt-core/js/jquery.dataTables.min.js"></script>
+    <link href="HMM_FAZH_files/crosstalk/css/crosstalk.css" rel="stylesheet" />
+    <script src="HMM_FAZH_files/crosstalk/js/crosstalk.min.js"></script>
+    <link rel="stylesheet" href="xaringan-themer.css" type="text/css" />
+  </head>
+  <body>
+    <textarea id="source">
+class: center, middle, inverse, title-slide
+
+# Hidden Markov Models
+## ST912 Statistical Frontiers
+### Fernando A. Zepeda H.
+### 2021-05-20
+
+---
+
+
+
+
+
+
+
+
+background-image: url(img/zucchini_cover.png)
+background-size: 40%
+
+---
+class: left, top
+
+# What we were presented with
+
+1. Motivation and definition
+2. Likelihood and decoding
+3. Parameter estimation
+
+Illustrated by a Poisson HMM for Earthquake data
+&lt;br&gt;
+
+&lt;img src="img/earthquake_example.png" width="60%" style="display: block; margin: auto;" /&gt;
+
+---
+
+# What I want to present today
+
+1. Simple extension to toy data
+2. My "own" implementation
+3. Model selection
+4. Two different Bayesian applications
+  - Poll of polls 
+  - Defensive coverage in sports
+
+---
+
+# Simulated data
+
+
+
+.pull-left[
+<div id="htmlwidget-127a37708770a67761ac" style="width:100%;height:1px;" class="datatables html-widget"></div>
+<script type="application/json" data-for="htmlwidget-127a37708770a67761ac">{"x":{"filter":"none","fillContainer":false,"data":[["1","2","3","4","5","6","7","8","9","10"],[2,33,75,140,155,161,171,208,224,231],[1.78111806783126,0.748935724124876,0.984661385384529,1.12018167928256,0.850319199502107,0.50818887789769,0.808224919727951,0.868607616263964,1.05909463265237,1.06156905762425]],"container":"<table class=\"display\">\n  <thead>\n    <tr>\n      <th> <\/th>\n      <th>Tiempo<\/th>\n      <th>X<\/th>\n    <\/tr>\n  <\/thead>\n<\/table>","options":{"pageLength":10,"columnDefs":[{"className":"dt-right","targets":[1,2]},{"orderable":false,"targets":0}],"order":[],"autoWidth":false,"orderClasses":false}},"evals":[],"jsHooks":[]}</script>
+]
+
+.pull-right[
+
+
+&lt;br&gt;
+
+&lt;img src="HMM_FAZH_files/figure-html/unnamed-chunk-5-1.png" width="90%" /&gt;
+]
+
+---
+class: center
+
+# Another way to look at it
+
+
+
+&lt;img src="HMM_FAZH_files/figure-html/unnamed-chunk-6-1.png" width="60%" /&gt;
+
+
+---
+
+# A "simple" model
+
+We can think of the following simple HMM with two time series, frequency and severity, depending upon the hidden states `\(Z_t\)`:
+
+&lt;img src="img/hmm_freq_sev_diagrama.png" width="90%" style="display: block; margin: auto;" /&gt;
+
+where at each time `\(t\)`
+
+`$$N_t | Z_t = z \sim Poi(\lambda_{z})$$`
+
+`$$X_{i, t} | Z_t = z \sim Gamma(a_{z}, b_{z}) \qquad i=1, 2, \dots, N_t$$`
+
+
+---
+
+# An R implementation
+
+Based on **Zucchini et al.**, particularily their algorithms **A.1.7**, **A.1.8**, and **A.1.9**, I wanted to do my own implementation in R for
+
+- The Forward-Backward algorithm
+- EM algorithm (Baum-Welch for HMM)
+- Local decoding
+
+---
+
+# Forward probabilites
+
+
+```r
+log_f[[1]] &lt;- dpois(N[1], lambda = l, log = TRUE) + 
+  sum(dgamma(X[[1]], shape = a, rate = b, log = TRUE))
+foo &lt;- exp(log(d) + log_f[[1]])
+sumfoo &lt;- sum(foo)
+lscale &lt;- log(sumfoo) 
+foo &lt;- foo/sumfoo
+lalpha[,1] &lt;- lscale+log(foo)
+for (t in 2:T_max){
+  log_f[[t]] &lt;- dpois(N[t], lambda = l, log = TRUE) + 
+    sum(dgamma(X[[t]], shape = a, rate = b, log = TRUE))
+  foo &lt;- foo %*% exp(log(G) + matrix(log_f[[t]], nrow = m, 
+                                     ncol = m, byrow = TRUE))
+  sumfoo &lt;- sum(foo)
+  lscale &lt;- lscale+log(sumfoo)
+  foo &lt;- foo/sumfoo
+  lalpha[,t] &lt;- log(foo) + lscale
+}
+```
+
+---
+
+# Backward probabilites
+
+
+```r
+lbeta[, T_max] &lt;- rep(0, m)
+foo &lt;- rep(1/m, m)
+lscale_b &lt;- log(m)
+for(t in (T_max-1):1){
+  foo &lt;- G %*% (exp(log_f[[t+1]]) * foo)
+  lbeta[, t] &lt;- log(foo) + lscale_b
+  sumfoo &lt;- sum(foo)
+  foo &lt;- foo/sumfoo
+  lscale_b &lt;- lscale_b + log(sumfoo)
+}
+```
+
+---
+
+# Local decoding
+
+
+```r
+c &lt;- max(lalpha[, T_max])
+llk &lt;- c + log(sum(exp(lalpha[, T_max] - c)))
+for(t in 1:T_max){
+  state_probs[,t] &lt;- exp(lalpha[, t] + lbeta[, t] - llk)
+  state_loc_dec[t] &lt;- which.max(state_probs[,t])
+}
+```
+
+---
+
+# And join these subroutines
+
+in a longer function called *implementa_ajuste*
+
+
+```r
+implementa_ajuste &lt;- function(N, X, T_max, m, d, G, l, a, b){
+  
+  # Based on A.1.7, A.1.8, and A.1.9 from Zucchini et al.
+  
+  lalpha &lt;- matrix(NA, m ,T_max)
+  lbeta &lt;- matrix(NA, m, T_max)
+  log_f &lt;- rep(list(rep(NA, m)))
+  state_probs &lt;- matrix(NA, m, T_max)
+  state_loc_dec &lt;- rep(NA, T_max)
+  
+  # Forward 
+  log_f[[1]] &lt;- dpois(N[1], lambda = l, log = TRUE) + 
+    sum(dgamma(X[[1]], shape = a, rate = b, log = TRUE))
+  foo &lt;- exp(log(d) + log_f[[1]])
+  sumfoo &lt;- sum(foo)
+  lscale &lt;- log(sumfoo) 
+  foo &lt;- foo/sumfoo
+  lalpha[,1] &lt;- lscale+log(foo)
+  for (t in 2:T_max){
+    log_f[[t]] &lt;- dpois(N[t], lambda = l, log = TRUE) + 
+      sum(dgamma(X[[t]], shape = a, rate = b, log = TRUE))
+    foo &lt;- foo %*% exp(log(G) + matrix(log_f[[t]], nrow = m, ncol = m, byrow = TRUE))
+    sumfoo &lt;- sum(foo)
+    lscale &lt;- lscale+log(sumfoo)
+    foo &lt;- foo/sumfoo
+    lalpha[,t] &lt;- log(foo) + lscale
+  }
+  
+  # Backward
+  lbeta[, T_max] &lt;- rep(0, m)
+  foo &lt;- rep(1/m, m)
+  lscale_b &lt;- log(m)
+  for(t in (T_max-1):1){
+    foo &lt;- G %*% (exp(log_f[[t+1]]) * foo)
+    lbeta[, t] &lt;- log(foo) + lscale_b
+    sumfoo &lt;- sum(foo)
+    foo &lt;- foo/sumfoo
+    lscale_b &lt;- lscale_b + log(sumfoo)
+  }
+  
+  
+  # Local decoding
+  c &lt;- max(lalpha[, T_max])
+  llk &lt;- c + log(sum(exp(lalpha[, T_max] - c)))
+  for(t in 1:T_max){
+    state_probs[,t] &lt;- exp(lalpha[, t] + lbeta[, t] - llk)
+    state_loc_dec[t] &lt;- which.max(state_probs[,t])
+  }
+  
+  # Effective number of parameters: Gamma with constrains, delta with constrain, l + a + b
+  p &lt;- m*(m-1) + (m-1) + m*3 
+  
+  # AIC and BIC
+  aic &lt;- 2*(-llk + p)
+  bic &lt;- -2*llk + p*log(T_max)
+  
+  # Residuals missing
+  
+  return(list(log_f = log_f, lalpha = lalpha, lbeta = lbeta, llk = llk, 
+              states_loc_dec = state_loc_dec, state_probs = state_probs, 
+              aic = aic, bic = bic))
+  
+}
+```
+
+
+---
+
+## E-step
+
+
+```r
+implementa_paso_e &lt;- function(N, X, T_max, m, d, G, l, a, b){
+  
+  # Fit model given the current estimators of the parameters
+  ajuste &lt;- implementa_ajuste(N = N, X = X, T_max = T_max, m = m, 
+                              d = d, G = G, l = l, a = a, b = b)
+  
+  # Expectation for state indicators (conditional on current values)
+  u_e &lt;- ajuste$state_probs
+  
+  # Expectation for transition indicators (conditional on current values)
+  v_e &lt;- rep(list(matrix(NA, nrow = m, ncol = m)), T_max)
+  c &lt;- max(ajuste$lalpha[, T_max])
+  llk &lt;- c + log(sum(exp(ajuste$lalpha[, T_max] - c)))
+  for(t in 2:T_max){
+    for(j in 1:m){
+      for(k in 1:m){
+        v_e[[t]][j,k] &lt;- exp(ajuste$lalpha[j, t-1] + 
+                               log(G[j,k]) + 
+                               ajuste$log_f[[t]][k] + 
+                               ajuste$lbeta[k, t] - 
+                               llk)
+      }
+    }
+  }
+  
+  return(list(u_e = u_e, v_e = v_e, ajuste = ajuste))
+    
+}
+```
+
+---
+
+# M-step
+
+
+
+
+```r
+implementa_paso_m &lt;- function(u_e, v_e, a, b, N, X, T_max, m){
+  
+  # delta
+  d_e &lt;- u_e[,1]
+  
+  # Gamma
+  G_e &lt;- matrix(0, ncol = m, nrow = m)
+  for(j in 1:m){
+    for(k in 1:m){
+      for(t in 2:T_max){
+        G_e[j, k] &lt;- G_e[j, k] + v_e[[t]][j,k]
+      }
+    }
+    sum_f &lt;- sum(G_e[j,])
+    G_e[j, ] &lt;- exp(log(G_e[j, ]) - log(sum_f))
+  }
+  
+  # lambda
+  l_e &lt;- rep(0, m)
+  for(j in 1:m){
+    l_e[j] &lt;- weighted.mean(N, w = u_e[j,])
+  }
+```
+
+---
+
+# M-step
+
+
+```r
+# alpha y beta
+a_e &lt;- rep(0, m)
+b_e &lt;- rep(0, m)
+for(j in 1:m){
+  optim &lt;- nlm(implementa_dgamma_pond, p = c(log(a[j]), log(b[j])), 
+               u_e_j = u_e[j, ], X = X, N = N)
+  a_e[j] &lt;- exp(optim$estimate[1])
+  b_e[j] &lt;- exp(optim$estimate[2])
+}
+
+return(list(d_e = d_e, G_e = G_e, l_e = l_e, a_e = a_e, b_e = b_e))
+
+}
+```
+
+---
+
+# M-step
+
+```r
+implementa_dgamma_pond &lt;- function(theta, u_e_j, X, N){
+  
+  log_ver &lt;- 0
+  a_tilde &lt;- exp(theta[1])
+  b_tilde &lt;- exp(theta[2])
+  for(t in seq_along(X)){
+    log_ver &lt;- log_ver + 
+      u_e_j[t]*sum(dgamma(X[[t]], 
+                          shape = a_tilde, 
+                          rate = b_tilde, 
+                          log = TRUE))
+  }
+  return( -log_ver )
+  
+}
+```
+
+
+
+---
+
+# Now we're ready to fit, but how many states?
+
+We will try `\(m=2, 3, \dots, 6\)` and then perform model selection with the two common meassures AIC and BIC. 
+
+$$ AIC = 2(-l + p)$$ 
+where `\(l\)` is the log-likelihood and `\(p\)` the number of parameters, which depends on `\(m\)`. 
+
+$$ BIC = -2l + p\log(T)$$ 
+where `\(T\)` is the number of observations, `\(p\)`, `\(l\)` are the same as with AIC. 
+
+
+
+---
+class: center
+
+# 2 states
+
+
+
+&lt;img src="HMM_FAZH_files/figure-html/unnamed-chunk-19-1.png" width="60%" /&gt;
+
+---
+class: center
+
+# 3 states
+
+
+
+&lt;img src="HMM_FAZH_files/figure-html/unnamed-chunk-20-1.png" width="60%" /&gt;
+
+---
+class: center
+
+# 4 states
+
+
+
+&lt;img src="HMM_FAZH_files/figure-html/unnamed-chunk-21-1.png" width="60%" /&gt;
+
+---
+class: center
+
+# 5 states
+
+
+
+&lt;img src="HMM_FAZH_files/figure-html/unnamed-chunk-22-1.png" width="60%" /&gt;
+
+---
+class: center
+
+# 6 states
+
+
+
+&lt;img src="HMM_FAZH_files/figure-html/unnamed-chunk-23-1.png" width="60%" /&gt;
+
+---
+class: center
+
+# AIC and BIC
+
+
+
+&lt;img src="HMM_FAZH_files/figure-html/unnamed-chunk-24-1.png" width="60%" /&gt;
+
+---
+class: center
+
+# What was the truth? 
+
+In fact, the true data generating process had only 3 states, represented in these plots by the solid lines: 
+
+.pull-left[
+
+
+&lt;img src="HMM_FAZH_files/figure-html/unnamed-chunk-25-1.png" width="80%" /&gt;
+]
+
+.pull-right[
+
+
+&lt;img src="HMM_FAZH_files/figure-html/unnamed-chunk-26-1.png" width="80%" /&gt;
+]
+
+---
+class: center
+
+# With a clearer distinction
+
+
+
+
+
+&lt;img src="HMM_FAZH_files/figure-html/unnamed-chunk-28-1.png" width="60%" /&gt;
+
+---
+class: center
+
+# And redoing all the process
+
+
+
+
+
+
+&lt;img src="HMM_FAZH_files/figure-html/unnamed-chunk-30-1.png" width="60%" /&gt;
+
+---
+class: inverse, center, middle
+
+# Additional extensions
+
+---
+
+# Poll of Polls
+
+State-space model fitted via MCMC (Stan). The responses are multinomial counts from surveys, and the hidden/latent states are population preferences. This also incorporates covariates, namely house effects from polling organizations. 
+
+&lt;img src="img/poll_of_polls.png" width="90%" style="display: block; margin: auto;" /&gt;
+
+
+---
+
+# Poll of Polls
+
+`\(Y_s \sim Mult(\theta_s, n_s)\)`
+
+`\(\eta_{s, c} = \log\left(\dfrac{\theta_{s,c}}{\theta_{s,C}}\right)\)`
+for `\(c = 1, 2, \dots, C-1\)` where `\(C\)` is the number of candidates. 
+
+`\(\eta_s \sim N(\mu_{t[s]} + \gamma_{h[s]}, V_{h[s]})\)`
+where `\(t\)` denotes the time and `\(h\)` the *house*. 
+
+`\(\mu_t \sim N(\mu_{t-1}, W) \qquad \mu_0 \sim N(m, W)\)`. 
+
+Finally, *a priori* distributions were given to the house effects as normals centered at zero and to the variances as Inverse Wisharts. 
+
+---
+class: center
+# Defensive coverage in sports
+
+.pull-left[
+
+- American Football **Pazdernik, 2017**
+
+&lt;img src="img/defense_nfl.png" width="90%" style="display: block; margin: auto;" /&gt;
+
+]
+
+.pull-right[
+
+- Basketball  **Ali, 2019** 
+
+&lt;video width="320" height="240"&gt;
+&lt;source src="media/defense_basket.mp4" type="video/mp4"&gt;
+&lt;/video&gt;
+
+]
+
+---
+class: inverse, center, middle
+
+# Thank you
+    </textarea>
+<style data-target="print-only">@media screen {.remark-slide-container{display:block;}.remark-slide-scaler{box-shadow:none;}}</style>
+<script src="https://remarkjs.com/downloads/remark-latest.min.js"></script>
+<script>var slideshow = remark.create();
+if (window.HTMLWidgets) slideshow.on('afterShowSlide', function (slide) {
+  window.dispatchEvent(new Event('resize'));
+});
+(function(d) {
+  var s = d.createElement("style"), r = d.querySelector(".remark-slide-scaler");
+  if (!r) return;
+  s.type = "text/css"; s.innerHTML = "@page {size: " + r.style.width + " " + r.style.height +"; }";
+  d.head.appendChild(s);
+})(document);
+
+(function(d) {
+  var el = d.getElementsByClassName("remark-slides-area");
+  if (!el) return;
+  var slide, slides = slideshow.getSlides(), els = el[0].children;
+  for (var i = 1; i < slides.length; i++) {
+    slide = slides[i];
+    if (slide.properties.continued === "true" || slide.properties.count === "false") {
+      els[i - 1].className += ' has-continuation';
+    }
+  }
+  var s = d.createElement("style");
+  s.type = "text/css"; s.innerHTML = "@media print { .has-continuation { display: none; } }";
+  d.head.appendChild(s);
+})(document);
+// delete the temporary CSS (for displaying all slides initially) when the user
+// starts to view slides
+(function() {
+  var deleted = false;
+  slideshow.on('beforeShowSlide', function(slide) {
+    if (deleted) return;
+    var sheets = document.styleSheets, node;
+    for (var i = 0; i < sheets.length; i++) {
+      node = sheets[i].ownerNode;
+      if (node.dataset["target"] !== "print-only") continue;
+      node.parentNode.removeChild(node);
+    }
+    deleted = true;
+  });
+})();
+(function() {
+  "use strict"
+  // Replace <script> tags in slides area to make them executable
+  var scripts = document.querySelectorAll(
+    '.remark-slides-area .remark-slide-container script'
+  );
+  if (!scripts.length) return;
+  for (var i = 0; i < scripts.length; i++) {
+    var s = document.createElement('script');
+    var code = document.createTextNode(scripts[i].textContent);
+    s.appendChild(code);
+    var scriptAttrs = scripts[i].attributes;
+    for (var j = 0; j < scriptAttrs.length; j++) {
+      s.setAttribute(scriptAttrs[j].name, scriptAttrs[j].value);
+    }
+    scripts[i].parentElement.replaceChild(s, scripts[i]);
+  }
+})();
+(function() {
+  var links = document.getElementsByTagName('a');
+  for (var i = 0; i < links.length; i++) {
+    if (/^(https?:)?\/\//.test(links[i].getAttribute('href'))) {
+      links[i].target = '_blank';
+    }
+  }
+})();</script>
+
+<script>
+slideshow._releaseMath = function(el) {
+  var i, text, code, codes = el.getElementsByTagName('code');
+  for (i = 0; i < codes.length;) {
+    code = codes[i];
+    if (code.parentNode.tagName !== 'PRE' && code.childElementCount === 0) {
+      text = code.textContent;
+      if (/^\\\((.|\s)+\\\)$/.test(text) || /^\\\[(.|\s)+\\\]$/.test(text) ||
+          /^\$\$(.|\s)+\$\$$/.test(text) ||
+          /^\\begin\{([^}]+)\}(.|\s)+\\end\{[^}]+\}$/.test(text)) {
+        code.outerHTML = code.innerHTML;  // remove <code></code>
+        continue;
+      }
+    }
+    i++;
+  }
+};
+slideshow._releaseMath(document);
+</script>
+<!-- dynamically load mathjax for compatibility with self-contained -->
+<script>
+(function () {
+  var script = document.createElement('script');
+  script.type = 'text/javascript';
+  script.src  = 'https://mathjax.rstudio.com/latest/MathJax.js?config=TeX-MML-AM_CHTML';
+  if (location.protocol !== 'file:' && /^https?:/.test(script.src))
+    script.src  = script.src.replace(/^https?:/, '');
+  document.getElementsByTagName('head')[0].appendChild(script);
+})();
+</script>
+  </body>
+</html>
